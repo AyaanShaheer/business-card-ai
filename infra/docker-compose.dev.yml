@@ -1,0 +1,29 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: business-card-ai-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: business_card_ai
+      POSTGRES_USER: business_card_ai
+      POSTGRES_PASSWORD: business_card_ai_dev
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U business_card_ai -d business_card_ai",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
