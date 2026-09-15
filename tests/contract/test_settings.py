@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 from pydantic import ValidationError
 
@@ -13,7 +11,7 @@ def test_settings_load_database_url(monkeypatch):
 
     monkeypatch.setenv("DATABASE_URL", database_url)
 
-    settings = Settings()
+    settings = Settings(_env_file=None)
 
     assert str(settings.database_url) == database_url
 
@@ -22,7 +20,7 @@ def test_settings_reject_missing_database_url(monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
 
     with pytest.raises(ValidationError):
-        Settings()
+        Settings(_env_file=None)
 
 
 def test_settings_have_safe_default_limits(monkeypatch):
@@ -32,7 +30,7 @@ def test_settings_have_safe_default_limits(monkeypatch):
 
     monkeypatch.setenv("DATABASE_URL", database_url)
 
-    settings = Settings()
+    settings = Settings(_env_file=None)
 
     assert settings.max_file_size_mb > 0
     assert settings.max_files_per_job > 0
@@ -47,7 +45,7 @@ def test_settings_respect_environment_overrides(monkeypatch):
     monkeypatch.setenv("MAX_FILE_SIZE_MB", "20")
     monkeypatch.setenv("MAX_FILES_PER_JOB", "100")
 
-    settings = Settings()
+    settings = Settings(_env_file=None)
 
     assert settings.max_file_size_mb == 20
     assert settings.max_files_per_job == 100
@@ -62,4 +60,4 @@ def test_settings_reject_invalid_file_limit(monkeypatch):
     monkeypatch.setenv("MAX_FILE_SIZE_MB", "0")
 
     with pytest.raises(ValidationError):
-        Settings()
+        Settings(_env_file=None)

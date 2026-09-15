@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -201,9 +202,10 @@ class DocumentModel(Base):
             name="ck_documents_attempt_count_non_negative",
         ),
         Index(
-            "ix_documents_job_content_hash",
+            "uq_documents_job_content_hash",
             "job_id",
             "content_hash",
+            unique=True,
         ),
     )
 
@@ -245,8 +247,8 @@ class ExtractionModel(Base):
         index=True,
     )
 
-    raw_output: Mapped[str | None] = mapped_column(
-        Text,
+    raw_output: Mapped[dict | None] = mapped_column(
+        JSON,
         nullable=True,
     )
 
@@ -382,7 +384,7 @@ class ExportModel(Base):
     )
 
     status: Mapped[str] = mapped_column(
-        String(32),
+        String(16),
         nullable=False,
         index=True,
     )
