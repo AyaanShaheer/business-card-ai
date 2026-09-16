@@ -2,7 +2,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from packages.common.models import JobModel, DocumentModel
+from packages.common.models import DocumentModel, JobModel, LeadModel
 
 
 class JobRepository:
@@ -96,4 +96,25 @@ class DocumentRepository:
                 DocumentModel.content_hash == content_hash,
             )
             .one_or_none()
+        )
+
+
+class LeadRepository:
+    """Data-access operations for leads."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def get_by_job_id(
+        self,
+        job_id: UUID,
+    ) -> list[LeadModel]:
+        return (
+            self._session.query(LeadModel)
+            .filter(LeadModel.document_id.in_(
+                self._session.query(DocumentModel.id).filter(
+                    DocumentModel.job_id == job_id,
+                )
+            ))
+            .all()
         )

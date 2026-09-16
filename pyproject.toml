@@ -1,0 +1,26 @@
+[project]
+name = "business-card-ai"
+version = "0.1.0"
+description = "AI-powered business card lead extraction using Qwen VLM"
+requires-python = ">=3.12"
+
+dependencies = [
+    "fastapi>=0.141.0",
+    "uvicorn[standard]>=0.30.0",
+    "sqlalchemy>=2.0.50",
+    "alembic>=1.20.0",
+    "psycopg[binary]>=3.3.0",
+    "pydantic>=2.13.0",
+    "pydantic-settings>=2.15.0",
+    "email-validator>=2.3.0",
+    "httpx>=0.28.0",
+    "openpyxl>=3.1.5",
+    "python-multipart>=0.0.20",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.0",
+    "pytest-anyio>=0.0.0",
+    "anyio>=4.0.0",
+]

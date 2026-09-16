@@ -28,6 +28,7 @@ Thumbs.db
 
 # Application runtime data
 local_storage/
+*.db
 
 # Logs
 *.log

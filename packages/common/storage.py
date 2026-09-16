@@ -56,10 +56,18 @@ class LocalObjectReader:
                 f"unsupported storage URI: {source_uri}"
             )
 
-        path = Path(source_uri.removeprefix("local://"))
+        raw_path = Path(source_uri.removeprefix("local://"))
 
-        if not path.is_absolute():
-            path = self._base_dir / path
+        if raw_path.is_absolute():
+            path = raw_path
+        elif (self._base_dir / raw_path).exists():
+            path = self._base_dir / raw_path
+        elif raw_path.parts and raw_path.parts[0] == self._base_dir.name and (self._base_dir.parent / raw_path).exists():
+            path = self._base_dir.parent / raw_path
+        elif raw_path.exists():
+            path = raw_path
+        else:
+            path = self._base_dir / raw_path
 
         path = path.resolve()
 

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from packages.common.models import (
     DocumentModel,
     ExtractionModel,
+    JobModel,
     LeadModel,
 )
 from packages.schemas import Lead
@@ -17,7 +18,7 @@ from packages.schemas import Lead
 class DocumentProcessor:
     """
     Coordinates object retrieval, model inference, validation,
-    and persistence.
+    job progress tracking, and persistence.
     """
 
     def __init__(
@@ -112,6 +113,12 @@ class DocumentProcessor:
                 document.status = "extracted"
                 document.attempt_count = attempt_number
 
+                self._update_job_progress(
+                    session,
+                    job_id=job_id,
+                    success=True,
+                )
+
                 session.commit()
 
             except (
@@ -122,11 +129,58 @@ class DocumentProcessor:
             ):
                 session.rollback()
 
-                document = session.get(DocumentModel, document_id)
+                document = session.get(
+                    DocumentModel,
+                    document_id,
+                )
 
                 if document is not None:
                     document.status = "failed"
                     document.attempt_count += 1
+
+                    self._update_job_progress(
+                        session,
+                        job_id=job_id,
+                        success=False,
+                    )
+
                     session.commit()
 
                 raise
+
+    def _update_job_progress(
+        self,
+        session: Session,
+        *,
+        job_id: UUID,
+        success: bool,
+    ) -> None:
+        job = session.get(
+            JobModel,
+            job_id,
+        )
+
+        if job is None:
+            raise ValueError("job not found")
+
+        if job.started_at is None:
+            job.started_at = datetime.now(UTC)
+
+        job.processed_documents += 1
+
+        if success:
+            job.successful_documents += 1
+        else:
+            job.failed_documents += 1
+
+        if job.processed_documents >= job.total_documents:
+            job.completed_at = datetime.now(UTC)
+
+            if job.failed_documents > 0:
+                job.status = "completed_with_errors"
+            else:
+                job.status = "completed"
+        else:
+            job.status = "processing"
+
+        session.flush()
