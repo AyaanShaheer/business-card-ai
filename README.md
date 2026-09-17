@@ -143,6 +143,45 @@ python -m pytest tests/contract/ -q          # Contract tests
 python -m pytest tests/integration/ -q -m integration  # Integration tests (needs PostgreSQL)
 ```
 
+## ☁️ AWS Deployment (Production)
+
+The entire application (FastAPI backend + React SPA frontend + PostgreSQL + Background Worker) is packaged into a production-ready Docker Compose stack that runs on an **AWS EC2 Free Tier** instance (t2.micro / t3.micro with Ubuntu 24.04).
+
+### Automated One-Shot Deployment:
+
+1. **Launch an EC2 Instance**:
+   - AMI: Ubuntu 24.04 LTS (Free Tier eligible)
+   - Instance Type: `t2.micro` or `t3.micro`
+   - Security Group: Allow Inbound **SSH (Port 22)** and **HTTP (Port 80)** from anywhere (`0.0.0.0/0`)
+   - Storage: 15–20 GB gp3
+
+2. **SSH into the Instance**:
+   ```bash
+   ssh -i your-key.pem ubuntu@<EC2-PUBLIC-IP>
+   ```
+
+3. **Clone & Run the Deployment Script**:
+   ```bash
+   git clone https://github.com/AyaanShaheer/business-card-ai.git
+   cd business-card-ai
+   chmod +x deploy/aws-setup.sh
+   sudo ./deploy/aws-setup.sh
+   ```
+
+4. **Configure Inference API Key**:
+   When prompted, add your OpenRouter / Qwen API key to `.env`:
+   ```bash
+   nano /opt/business-card-ai/.env
+   # Set INFERENCE_API_KEY=your_key_here
+   ```
+   Then start the services:
+   ```bash
+   cd /opt/business-card-ai && docker compose -f infra/docker-compose.prod.yml up -d --build
+   ```
+
+5. **Access Application**:
+   Open `http://<EC2-PUBLIC-IP>` in your browser!
+
 ## 🌐 Environment Variables
 
 | Variable | Description | Default |

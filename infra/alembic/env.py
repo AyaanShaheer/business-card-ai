@@ -17,10 +17,10 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-database_url = os.getenv("DATABASE_URL")
+database_url = config.get_main_option("sqlalchemy.url") or os.getenv("DATABASE_URL")
 
 if database_url:
-    config.set_main_option("sqlalchemy.url", database_url)    
+    config.set_main_option("sqlalchemy.url", database_url)
 
 # add your model's MetaData object here
 # for 'autogenerate' support
@@ -48,9 +48,8 @@ def run_migrations_offline() -> None:
 
     Calls to context.execute() here emit the given string to the
     script output.
-
     """
-    database_url = os.getenv("DATABASE_URL")
+    database_url = config.get_main_option("sqlalchemy.url") or os.getenv("DATABASE_URL")
     context.configure(
         url=database_url,
         target_metadata=target_metadata,
@@ -65,7 +64,7 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
 
-    database_url = os.getenv("DATABASE_URL")
+    database_url = config.get_main_option("sqlalchemy.url") or os.getenv("DATABASE_URL")
 
     if database_url:
         connectable = create_engine(

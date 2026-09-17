@@ -3,10 +3,12 @@ import os
 import sys
 import threading
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -21,6 +23,9 @@ from packages.common.queue import DocumentMessage
 from packages.common.settings import Settings
 
 logger = logging.getLogger("business_card_ai")
+
+# Resolve the frontend build directory relative to apps/ directory.
+_FRONTEND_DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 
 
 def _recover_unprocessed_documents(engine, queue) -> None:
@@ -117,6 +122,17 @@ async def value_error_handler(
     )
 
 
+# ── API routes ──────────────────────────────────────────────────
+# Mount all API routers under /api so the frontend can call
+# /api/jobs, /api/jobs/{id}/leads, etc. without a proxy.
+# The same routers are also kept at their original paths (e.g. /jobs)
+# so that existing tests and local dev (Vite proxy) continue to work.
+
+app.include_router(jobs_router, prefix="/api")
+app.include_router(documents_router, prefix="/api")
+app.include_router(exports_router, prefix="/api")
+
+# Keep original un-prefixed routes for backward compat / tests
 app.include_router(jobs_router)
 app.include_router(documents_router)
 app.include_router(exports_router)
@@ -125,3 +141,24 @@ app.include_router(exports_router)
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# ── Static frontend (production) ────────────────────────────────
+# In production the React build is served from apps/frontend/dist/.
+# This block is skipped if the dist directory doesn't exist (e.g. in
+# tests or local dev where Vite handles the frontend).
+
+if _FRONTEND_DIST.is_dir():
+    app.mount(
+        "/assets",
+        StaticFiles(directory=str(_FRONTEND_DIST / "assets")),
+        name="static-assets",
+    )
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str) -> FileResponse:
+        """SPA fallback — serve index.html for any path not matched by API routes."""
+        file_path = _FRONTEND_DIST / full_path
+        if file_path.is_file():
+            return FileResponse(str(file_path))
+        return FileResponse(str(_FRONTEND_DIST / "index.html"))
