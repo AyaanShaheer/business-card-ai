@@ -1,128 +1,673 @@
-# Business Card AI — VLM Lead Extraction
+# Business Card AI
 
-AI-powered business card lead extraction application using a **Qwen Vision-Language Model** to convert business card images into structured contact data.
+> AI-powered business card digitization using Qwen Vision-Language Models.
 
-## ✨ Features
+Business Card AI turns business card images into structured contact records using a Qwen Vision-Language Model (VLM).
 
-- **Bulk Upload** — Upload multiple business card images at once (JPEG, PNG, WebP)
-- **AI Extraction** — Qwen VLM processes images and extracts structured lead data
-- **Async Processing** — Queue-based architecture with real-time progress tracking
-- **Lead Display** — View all extracted contacts in a clean, sortable table
-- **Excel Export** — Download leads as a professionally formatted XLSX file
-- **Idempotent Uploads** — Duplicate images are detected via SHA-256 hashing
-- **Partial Failure Handling** — Individual file failures don't block the batch
+The application is designed around an asynchronous processing pipeline: users upload one or more cards, the API persists the job and documents, a background worker consumes queued documents, Qwen extracts structured data, Pydantic validates the result, PostgreSQL stores the normalized lead, and the frontend displays the completed records with Excel export.
 
-## 🏗 Architecture
+## Live Demo
 
-```mermaid
-graph LR
-    A[React Frontend] -->|REST API| B[FastAPI Backend]
-    B -->|Queue Message| C[InMemoryQueue]
-    C --> D[Worker Process]
-    D -->|Read Image| E[Object Storage]
-    D -->|Extract| F[Qwen VLM API]
-    D -->|Persist| G[(PostgreSQL)]
-    B -->|Query| G
+**Application:** http://44.192.45.107
+
+The current demo is deployed on AWS EC2 and runs the web application, PostgreSQL, Redis, and background worker as a Docker Compose production stack.
+
+> The live deployment currently uses HTTP. HTTPS/domain configuration is planned for a future production iteration.
+
+---
+
+## Why This Project?
+
+Business cards contain highly structured information, but extracting that information reliably from images involves several engineering problems:
+
+- Images may have different formats and sizes.
+- VLM inference is slower than a normal HTTP request.
+- A batch may contain both successful and failed documents.
+- Model output must be validated before it becomes application data.
+- Duplicate uploads should not unnecessarily create duplicate work.
+- Job state must survive process restarts.
+- Users need visibility into batch progress.
+- Extracted records should be easy to export.
+
+Rather than implementing the system as a single synchronous request, Business Card AI separates **API orchestration** from **background processing**.
+
+---
+
+# Features
+
+### Bulk business-card processing
+
+Upload multiple JPEG, PNG, or WebP business-card images as part of a single extraction job.
+
+### Qwen VLM extraction
+
+A Qwen Vision-Language Model extracts the following fields:
+
+- First name
+- Last name
+- Job title
+- Company
+- Location
+- Phone number
+- Email address
+
+### Asynchronous processing
+
+Uploaded documents are placed onto a Redis-backed queue and processed by a separate worker.
+
+This prevents long-running VLM inference from blocking the API request.
+
+### Structured validation
+
+Model output is validated using Pydantic v2 before normalized lead data is persisted.
+
+### Job progress tracking
+
+The system tracks:
+
+- Total documents
+- Processed documents
+- Successful documents
+- Failed documents
+- Job status
+- Completion state
+
+The frontend polls the job API and updates the progress UI.
+
+### Partial failure handling
+
+A failed document does not prevent the remaining documents in the batch from being processed.
+
+Jobs can finish with:
+
+```text
+COMPLETED
+````
+
+or:
+
+```text
+COMPLETED_WITH_ERRORS
 ```
 
-### System Flow
+depending on the outcome of the batch.
 
-1. **Create Job** → User specifies expected number of business cards
-2. **Upload Images** → Files are validated, hashed, stored, and queued for processing
-3. **Async Processing** → Worker consumes queue messages, invokes Qwen VLM inference
-4. **Validation** → Extracted JSON is validated against Lead schema (Pydantic v2)
-5. **Persistence** → Leads, extractions, and job progress stored in PostgreSQL
-6. **Display** → Frontend polls job status, displays progress and extracted leads
-7. **Export** → Download all leads as an Excel spreadsheet
+### Idempotent document handling
 
-### Why Async Processing?
+Uploaded images are hashed using SHA-256.
 
-Business card OCR via a vision-language model takes 5-30 seconds per image. Synchronous processing would block the API and cause timeouts on bulk uploads. The queue-based architecture:
+The database enforces uniqueness for:
 
-- Decouples upload from processing (fast HTTP responses)
-- Enables parallel processing (multiple workers)
-- Provides progress tracking (frontend polls status)
-- Handles partial failures gracefully (one bad image doesn't block others)
+```text
+job_id + content_hash
+```
 
-## 🛠 Technology Stack
+which prevents duplicate documents from being inserted into the same job.
 
-| Component | Technology |
-|---|---|
-| Backend API | FastAPI (Python 3.12+) |
-| Worker | Custom queue consumer |
-| Database | PostgreSQL 17 |
-| ORM | SQLAlchemy 2.0 |
-| Migrations | Alembic |
-| Validation | Pydantic v2 |
-| Inference | Qwen VLM (OpenAI-compatible API) |
-| Frontend | React + TypeScript + Vite |
-| Excel Export | openpyxl |
-| Queue | InMemoryQueue (SQS-compatible interface) |
-| Storage | Local filesystem (S3-compatible interface) |
+### Persistent job and lead storage
 
-## 📋 API Endpoints
+PostgreSQL stores jobs, documents, extraction records, normalized leads, and export state.
 
-| Method | Endpoint | Description |
-|---|---|---|
-| `POST` | `/jobs` | Create a new extraction job |
-| `GET` | `/jobs/{id}` | Get job status and progress |
-| `POST` | `/jobs/{id}/documents` | Upload a single document |
-| `POST` | `/jobs/{id}/documents/bulk` | Upload multiple documents |
-| `GET` | `/jobs/{id}/leads` | Get extracted leads for a job |
-| `GET` | `/jobs/{id}/export/xlsx` | Download leads as Excel file |
-| `GET` | `/health` | Health check |
+### Excel export
 
-## 🚀 Local Setup
+Completed leads can be exported as an `.xlsx` spreadsheet.
 
-### Prerequisites
+### Dockerized deployment
 
-- Python 3.12+
-- Node.js 20+
-- Docker (for PostgreSQL)
-- [uv](https://docs.astral.sh/uv/) (Python package manager)
+The application is packaged into a reproducible Docker image and deployed with Docker Compose.
 
-### 1. Start PostgreSQL
+### Provider-independent inference client
+
+The inference layer communicates through an OpenAI-compatible API interface, allowing the inference provider/model endpoint to be changed through environment configuration.
+
+---
+
+# Architecture
+
+```mermaid
+flowchart LR
+
+    U[Browser]
+
+    F[React + TypeScript + Vite]
+
+    A[FastAPI API]
+
+    R[(Redis)]
+    P[(PostgreSQL)]
+    S[Local Object Storage]
+
+    W[Background Worker]
+
+    Q[Qwen VLM<br/>OpenAI-compatible API]
+
+    E[Pydantic Validation]
+
+    X[Excel Export]
+
+    U --> F
+    F -->|REST / HTTP| A
+
+    A -->|Persist job/document| P
+    A -->|Store image| S
+    A -->|Enqueue document| R
+
+    R --> W
+
+    W -->|Read image| S
+    W -->|Inference request| Q
+    Q -->|Structured response| W
+
+    W --> E
+    E -->|Persist extraction + lead| P
+
+    F -->|Poll job status| A
+    A -->|Query results| P
+
+    F -->|Download| X
+```
+
+## Application Components
+
+| Component            | Responsibility                                                           |
+| -------------------- | ------------------------------------------------------------------------ |
+| React frontend       | Upload cards, display job progress, show extracted leads, download Excel |
+| FastAPI              | HTTP API, job creation, uploads, status, lead retrieval, export          |
+| Redis                | Cross-process document queue                                             |
+| Worker               | Consumes queued documents and executes extraction                        |
+| Qwen VLM             | Vision-language extraction from business-card images                     |
+| Pydantic             | Schema validation and normalization                                      |
+| PostgreSQL           | Persistent job, document, extraction, lead, and export state             |
+| Local object storage | Persistent image storage in the current deployment                       |
+| openpyxl             | XLSX generation                                                          |
+
+---
+
+# Processing Flow
+
+A typical extraction job follows this lifecycle:
+
+```text
+1. Create Job
+      ↓
+2. Upload Business Card
+      ↓
+3. Validate File
+      ↓
+4. Calculate SHA-256
+      ↓
+5. Persist Document
+      ↓
+6. Store Image
+      ↓
+7. Queue Document in Redis
+      ↓
+8. Worker Consumes Message
+      ↓
+9. Read Image
+      ↓
+10. Qwen VLM Inference
+      ↓
+11. Validate Structured Output
+      ↓
+12. Persist Extraction + Lead
+      ↓
+13. Update Job Progress
+      ↓
+14. Display Results
+      ↓
+15. Export XLSX
+```
+
+---
+
+# Why Asynchronous Processing?
+
+Vision-language inference is significantly slower than normal API operations.
+
+A synchronous architecture would force the upload request to remain open while the model processes every image in the batch.
+
+Instead:
+
+```text
+Client
+   │
+   │ upload
+   ▼
+FastAPI
+   │
+   ├── store document
+   ├── create database state
+   └── enqueue work
+             │
+             ▼
+          Redis
+             │
+             ▼
+          Worker
+             │
+             ▼
+          Qwen VLM
+```
+
+This provides several benefits:
+
+### Fast API responses
+
+The API does not wait for model inference before acknowledging document submission.
+
+### Isolation
+
+A model or document failure is isolated to the worker task instead of failing the entire HTTP request.
+
+### Horizontal scalability
+
+Additional workers can consume messages from the same queue.
+
+```text
+                Redis
+                  │
+        ┌─────────┼─────────┐
+        ▼         ▼         ▼
+     Worker 1  Worker 2  Worker 3
+```
+
+### Persistent job state
+
+Progress is stored in PostgreSQL rather than existing only in application memory.
+
+---
+
+# Data Model
+
+The system separates jobs, source documents, model extractions, and normalized leads.
+
+```text
+Job
+ │
+ ├── Document
+ │      │
+ │      └── Extraction
+ │              │
+ │              └── Lead
+ │
+ └── Export
+```
+
+## Job
+
+Tracks batch-level state:
+
+```text
+id
+status
+total_documents
+processed_documents
+successful_documents
+failed_documents
+review_documents
+created_at
+started_at
+completed_at
+```
+
+## Document
+
+Represents an uploaded business-card image:
+
+```text
+id
+job_id
+source_uri
+content_hash
+filename
+mime_type
+size_bytes
+status
+attempt_count
+created_at
+started_at
+completed_at
+```
+
+## Extraction
+
+Stores model-related information:
+
+```text
+id
+document_id
+attempt_number
+model_name
+model_version
+status
+raw_output
+validation_status
+review_status
+processing_latency_ms
+created_at
+```
+
+## Lead
+
+Stores the normalized contact information:
+
+```text
+id
+extraction_id
+document_id
+first_name
+last_name
+job_title
+company
+location
+phone_number
+email_address
+```
+
+---
+
+# Lead Schema
+
+The normalized application schema is intentionally small and strongly typed.
+
+```python
+class Lead(BaseModel):
+    first_name: str | None
+    last_name: str | None
+    job_title: str | None
+    company: str | None
+    location: str | None
+    phone_number: str | None
+    email_address: EmailStr | None
+```
+
+The model is instructed to return only information visible in the image and to use `null` when a field is unavailable.
+
+The validation pipeline is:
+
+```text
+Business Card Image
+        ↓
+Qwen VLM
+        ↓
+Raw JSON
+        ↓
+Pydantic Validation
+        ↓
+Normalized Lead
+```
+
+This keeps unvalidated model output from directly becoming application data.
+
+---
+
+# Qwen VLM
+
+The inference client uses an OpenAI-compatible API interface.
+
+The current AWS deployment is configured to use:
+
+```text
+Provider: OpenRouter
+Model: qwen/qwen3-vl-30b-a3b-instruct
+```
+
+The model endpoint is configurable through environment variables, so the application is not tightly coupled to one inference provider.
+
+The application does **not** expose the inference API key to the frontend.
+
+---
+
+# Prompting Strategy
+
+The extraction prompt enforces a structured response.
+
+The VLM is instructed to:
+
+1. Extract only information visible in the image.
+2. Never invent missing information.
+3. Return `null` when information is unavailable.
+4. Preserve phone numbers accurately.
+5. Preserve email addresses exactly.
+6. Separate first and last names where possible.
+7. Return only JSON matching the expected schema.
+
+The response is then validated by Pydantic.
+
+---
+
+# API
+
+The FastAPI backend exposes the following core endpoints.
+
+| Method | Endpoint                        | Purpose                          |
+| ------ | ------------------------------- | -------------------------------- |
+| `POST` | `/jobs`                         | Create an extraction job         |
+| `GET`  | `/jobs/{job_id}`                | Retrieve job status and progress |
+| `POST` | `/jobs/{job_id}/documents`      | Upload a document                |
+| `POST` | `/jobs/{job_id}/documents/bulk` | Upload multiple documents        |
+| `GET`  | `/jobs/{job_id}/leads`          | Retrieve extracted leads         |
+| `GET`  | `/jobs/{job_id}/export/xlsx`    | Download XLSX export             |
+| `GET`  | `/health`                       | Application health check         |
+
+Interactive API documentation is available through FastAPI:
+
+```text
+http://localhost:8000/docs
+```
+
+when running locally.
+
+---
+
+# Example Output
+
+A successfully processed business card produces a normalized record similar to:
+
+```json
+{
+  "first_name": "Ayaan",
+  "last_name": "Shaheer",
+  "job_title": "MLOps Engineer",
+  "company": "Royal Cloud Consultancy",
+  "location": "Dubai, United Arab Emirates",
+  "phone_number": "+971 50 123 4567",
+  "email_address": "ayaan@example.com"
+}
+```
+
+---
+
+# Technology Stack
+
+| Layer               | Technology                 |
+| ------------------- | -------------------------- |
+| Frontend            | React                      |
+| Language            | TypeScript                 |
+| Frontend tooling    | Vite                       |
+| Backend             | Python + FastAPI           |
+| Worker              | Python                     |
+| VLM                 | Qwen Vision-Language Model |
+| Inference protocol  | OpenAI-compatible API      |
+| Queue               | Redis                      |
+| Database            | PostgreSQL 17              |
+| ORM                 | SQLAlchemy 2.0             |
+| Migrations          | Alembic                    |
+| Validation          | Pydantic v2                |
+| Excel               | openpyxl                   |
+| Containerization    | Docker                     |
+| Local orchestration | Docker Compose             |
+| Cloud               | AWS EC2                    |
+
+---
+
+# Project Structure
+
+```text
+business-card-ai/
+│
+├── apps/
+│   ├── api/
+│   │   ├── routers/
+│   │   ├── dependencies.py
+│   │   └── main.py
+│   │
+│   ├── frontend/
+│   │   ├── src/
+│   │   ├── package.json
+│   │   └── vite.config.ts
+│   │
+│   ├── inference/
+│   │   └── client.py
+│   │
+│   └── worker/
+│       ├── application.py
+│       ├── factory.py
+│       ├── runtime.py
+│       └── worker.py
+│
+├── packages/
+│   ├── common/
+│   │   ├── db.py
+│   │   ├── models.py
+│   │   ├── repositories/
+│   │   └── services/
+│   │
+│   └── schemas/
+│       └── domain.py
+│
+├── infra/
+│   ├── alembic/
+│   ├── docker-compose.dev.yml
+│   └── docker-compose.prod.yml
+│
+├── tests/
+│   ├── contract/
+│   ├── integration/
+│   └── fixtures/
+│
+├── Dockerfile
+├── alembic.ini
+├── pyproject.toml
+├── .env.example
+└── README.md
+```
+
+---
+
+# Local Development
+
+## Prerequisites
+
+* Python 3.12+
+* Node.js 20+
+* Docker
+* Git
+* `uv`
+
+Install `uv` from:
+
+[https://docs.astral.sh/uv/](https://docs.astral.sh/uv/)
+
+---
+
+## 1. Clone the repository
+
+```bash
+git clone https://github.com/AyaanShaheer/business-card-ai.git
+cd business-card-ai
+```
+
+---
+
+## 2. Start PostgreSQL
 
 ```bash
 docker compose -f infra/docker-compose.dev.yml up -d
 ```
 
-### 2. Configure Environment
+---
+
+## 3. Configure environment variables
+
+Create the environment file:
 
 ```bash
 cp .env.example .env
-# Edit .env with your inference API credentials:
-#   INFERENCE_BASE_URL=<your-qwen-api-url>
-#   INFERENCE_MODEL=<model-name>
-#   INFERENCE_API_KEY=<your-api-key>
 ```
 
-### 3. Install Python Dependencies
+Configure the inference endpoint:
+
+```env
+DATABASE_URL=postgresql+psycopg://business_card_ai:business_card_ai_dev@localhost:5432/business_card_ai
+
+INFERENCE_BASE_URL=https://openrouter.ai/api/v1
+INFERENCE_MODEL=qwen/qwen3-vl-30b-a3b-instruct
+INFERENCE_API_KEY=<your-api-key>
+
+MAX_FILE_SIZE_MB=10
+MAX_FILES_PER_JOB=50
+INFERENCE_TIMEOUT_SECONDS=120
+```
+
+Never commit `.env` or API credentials.
+
+---
+
+## 4. Create the Python environment
 
 ```bash
 uv venv .venv
+```
+
+Activate it:
+
+```bash
+source .venv/bin/activate
+```
+
+Install dependencies:
+
+```bash
 uv pip install -e ".[dev]"
 ```
 
-### 4. Run Database Migrations
+---
+
+## 5. Run database migrations
 
 ```bash
 alembic upgrade head
 ```
 
-### 5. Start the API Server
+---
+
+## 6. Start the API
 
 ```bash
-uvicorn apps.api.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn apps.api.main:app \
+  --reload \
+  --host 0.0.0.0 \
+  --port 8000
 ```
 
-### 6. Start the Worker (separate terminal)
+---
+
+## 7. Start the worker
+
+Open another terminal:
 
 ```bash
+source .venv/bin/activate
 python -m apps.worker
 ```
 
-### 7. Start the Frontend (separate terminal)
+---
+
+## 8. Start the frontend
+
+Open another terminal:
 
 ```bash
 cd apps/frontend
@@ -130,121 +675,622 @@ npm install
 npm run dev
 ```
 
-The application will be available at **http://localhost:5173**
+The frontend will normally be available at:
 
-## 🔬 Running Tests
+```text
+http://localhost:5173
+```
+
+---
+
+# Running Tests
+
+Run the complete test suite:
 
 ```bash
-# Run all tests
-python -m pytest tests/ -q
-
-# Run specific test categories
-python -m pytest tests/contract/ -q          # Contract tests
-python -m pytest tests/integration/ -q -m integration  # Integration tests (needs PostgreSQL)
+python -m pytest -q
 ```
 
-## ☁️ AWS Deployment (Production)
+Run contract tests:
 
-The entire application (FastAPI backend + React SPA frontend + PostgreSQL + Background Worker) is packaged into a production-ready Docker Compose stack that runs on an **AWS EC2 Free Tier** instance (t2.micro / t3.micro with Ubuntu 24.04).
-
-### Automated One-Shot Deployment:
-
-1. **Launch an EC2 Instance**:
-   - AMI: Ubuntu 24.04 LTS (Free Tier eligible)
-   - Instance Type: `t2.micro` or `t3.micro`
-   - Security Group: Allow Inbound **SSH (Port 22)** and **HTTP (Port 80)** from anywhere (`0.0.0.0/0`)
-   - Storage: 15–20 GB gp3
-
-2. **SSH into the Instance**:
-   ```bash
-   ssh -i your-key.pem ubuntu@<EC2-PUBLIC-IP>
-   ```
-
-3. **Clone & Run the Deployment Script**:
-   ```bash
-   git clone https://github.com/AyaanShaheer/business-card-ai.git
-   cd business-card-ai
-   chmod +x deploy/aws-setup.sh
-   sudo ./deploy/aws-setup.sh
-   ```
-
-4. **Configure Inference API Key**:
-   When prompted, add your OpenRouter / Qwen API key to `.env`:
-   ```bash
-   nano /opt/business-card-ai/.env
-   # Set INFERENCE_API_KEY=your_key_here
-   ```
-   Then start the services:
-   ```bash
-   cd /opt/business-card-ai && docker compose -f infra/docker-compose.prod.yml up -d --build
-   ```
-
-5. **Access Application**:
-   Open `http://<EC2-PUBLIC-IP>` in your browser!
-
-## 🌐 Environment Variables
-
-| Variable | Description | Default |
-|---|---|---|
-| `DATABASE_URL` | PostgreSQL connection string | Required |
-| `MAX_FILE_SIZE_MB` | Maximum upload file size | 10 |
-| `MAX_FILES_PER_JOB` | Maximum files per job | 50 |
-| `INFERENCE_BASE_URL` | Qwen API base URL | `http://localhost:8001/v1` |
-| `INFERENCE_MODEL` | Model name | `Qwen/Qwen3-VL-8B-Instruct` |
-| `INFERENCE_API_KEY` | API key for inference | `local-dev` |
-| `INFERENCE_TIMEOUT_SECONDS` | Inference timeout | 60 |
-
-## 📊 Extracted Lead Fields
-
-| Field | Description |
-|---|---|
-| First Name | Contact's first name |
-| Last Name | Contact's last name |
-| Position / Job Title | Professional title |
-| Company | Organization name |
-| Location | City, region, or country |
-| Phone Number | Phone with country code |
-| Email Address | Validated email address |
-
-## 🔒 Security
-
-- API keys and secrets are stored in `.env` (gitignored)
-- No credentials are committed to the repository
-- File uploads are validated for MIME type, size, and content hash
-- SQL injection prevention via parameterized queries (SQLAlchemy ORM)
-
-## 🔮 Future Production Roadmap
-
-After assignment submission, the architecture is designed to scale to:
-
-- **AWS EKS** with Kubernetes deployment
-- **Amazon SQS** replacing InMemoryQueue
-- **Amazon S3** replacing local object storage
-- **Self-hosted vLLM** or managed Qwen endpoint
-- **KEDA** auto-scaling workers based on queue depth
-- **Terraform** infrastructure-as-code
-- **OpenTelemetry** observability
-
-## 📁 Project Structure
-
+```bash
+python -m pytest tests/contract/ -q
 ```
-business-card-ai/
-├── apps/
-│   ├── api/              # FastAPI application
-│   │   ├── routers/      # HTTP endpoints
-│   │   ├── schemas.py    # Request/response models
-│   │   └── main.py       # App entry point
-│   ├── frontend/         # React + TypeScript + Vite
-│   ├── inference/        # Qwen VLM client
-│   └── worker/           # Queue consumer + document processor
-├── packages/
-│   ├── common/           # Shared: models, repos, services, storage
-│   └── schemas/          # Domain models (Pydantic v2)
-├── tests/
-│   ├── contract/         # Unit + contract tests
-│   └── integration/      # PostgreSQL integration tests
-├── infra/
-│   ├── alembic/          # Database migrations
-│   └── docker-compose.dev.yml
-└── pyproject.toml
+
+Run integration tests:
+
+```bash
+python -m pytest tests/integration/ -q
 ```
+
+Integration tests that require PostgreSQL should be run against an available PostgreSQL instance.
+
+The test suite covers areas including:
+
+* Settings
+* Database configuration
+* Migrations
+* Repository behavior
+* Document validation
+* Document idempotency
+* Job management
+* Queue behavior
+* Worker runtime
+* Document processing
+* Inference client behavior
+* API contracts
+* PostgreSQL integration
+
+---
+
+# Production Deployment
+
+The production deployment uses Docker Compose.
+
+The current AWS stack contains four services:
+
+```text
+┌──────────────────────────┐
+│ business-card-ai-web     │
+│ FastAPI + React SPA      │
+└────────────┬─────────────┘
+             │
+       ┌─────┴─────┐
+       ▼           ▼
+   PostgreSQL     Redis
+       ▲           ▲
+       │           │
+       └─────┬─────┘
+             │
+             ▼
+   business-card-ai-worker
+             │
+             ▼
+        Qwen VLM API
+```
+
+## Current AWS Environment
+
+The deployed application runs on:
+
+```text
+Cloud: AWS
+Service: EC2
+OS: Ubuntu 24.04 LTS
+Architecture: x86_64
+Deployment: Docker Compose
+Application port: 80
+```
+
+The model inference endpoint is external to the EC2 instance and is accessed through the configured Qwen-compatible provider endpoint.
+
+---
+
+## AWS Deployment
+
+Clone the repository on the EC2 instance:
+
+```bash
+git clone https://github.com/AyaanShaheer/business-card-ai.git
+cd business-card-ai
+```
+
+Create the production environment file:
+
+```bash
+nano .env
+```
+
+Example structure:
+
+```env
+DATABASE_URL=postgresql+psycopg://business_card_ai:business_card_ai_dev@postgres:5432/business_card_ai
+
+POSTGRES_DB=business_card_ai
+POSTGRES_USER=business_card_ai
+POSTGRES_PASSWORD=business_card_ai_dev
+
+REDIS_URL=redis://redis:6379/0
+
+MAX_FILE_SIZE_MB=10
+MAX_FILES_PER_JOB=50
+
+INFERENCE_BASE_URL=https://openrouter.ai/api/v1
+INFERENCE_MODEL=qwen/qwen3-vl-30b-a3b-instruct
+INFERENCE_API_KEY=<your-api-key>
+INFERENCE_TIMEOUT_SECONDS=120
+```
+
+Protect the file:
+
+```bash
+chmod 600 .env
+```
+
+Validate the Compose configuration:
+
+```bash
+docker compose \
+  --env-file .env \
+  -f infra/docker-compose.prod.yml \
+  config --services
+```
+
+Expected services:
+
+```text
+postgres
+redis
+web
+worker
+```
+
+Build and start:
+
+```bash
+docker compose \
+  --env-file .env \
+  -f infra/docker-compose.prod.yml \
+  up -d --build
+```
+
+Check the services:
+
+```bash
+docker compose \
+  --env-file .env \
+  -f infra/docker-compose.prod.yml \
+  ps
+```
+
+Check application health:
+
+```bash
+curl http://localhost/health
+```
+
+Expected:
+
+```json
+{"status":"ok"}
+```
+
+---
+
+# Production Configuration
+
+The production Compose stack provides:
+
+### PostgreSQL
+
+Persistent database storage for:
+
+* Jobs
+* Documents
+* Extractions
+* Leads
+* Exports
+
+### Redis
+
+Cross-process queue used by the worker architecture.
+
+### Web
+
+Runs:
+
+* FastAPI
+* React production build
+* Alembic migrations on startup
+* HTTP server on port 80
+
+### Worker
+
+Runs independently from the web process and consumes document messages from Redis.
+
+This separation allows the worker layer to scale independently from the API in a future deployment.
+
+---
+
+# Storage Architecture
+
+The current deployment uses a local persistent Docker volume for uploaded images.
+
+```text
+Document
+   │
+   ▼
+Local Object Storage
+   │
+   ▼
+Worker
+   │
+   ▼
+Qwen VLM
+```
+
+This was chosen to keep the assignment deployment simple and reproducible.
+
+The application is intentionally structured around a storage abstraction so that the current filesystem-backed implementation can later be replaced with object storage such as Amazon S3.
+
+---
+
+# Reliability
+
+Several failure cases are handled explicitly.
+
+## Unsupported file type
+
+The API rejects unsupported MIME types.
+
+## Oversized files
+
+Uploads exceeding the configured maximum size are rejected.
+
+## Duplicate documents
+
+SHA-256 content hashes prevent duplicate documents from being created within the same job.
+
+## Invalid model output
+
+If the VLM returns data that fails schema validation, the document is marked as failed instead of being persisted as a valid lead.
+
+## Individual processing failures
+
+Failures are isolated to individual documents.
+
+For example:
+
+```text
+10 documents
+│
+├── 8 successful
+├── 1 validation failure
+└── 1 inference failure
+```
+
+The job can still complete with an error state rather than failing the entire batch.
+
+## Database transactions
+
+Database updates are performed within SQLAlchemy transactions so that extraction and lead persistence remain consistent.
+
+---
+
+# Security
+
+The application currently follows several basic security practices:
+
+* API credentials are supplied through environment variables.
+* `.env` is excluded from version control.
+* Uploaded files are validated.
+* File sizes are limited.
+* File content hashes are stored for idempotency.
+* SQLAlchemy is used for parameterized database access.
+* PostgreSQL and Redis are internal Compose services.
+* Database and Redis ports do not need to be exposed publicly for the application to function.
+
+For a production internet-facing deployment, HTTPS, authentication, secret management, rate limiting, and stronger infrastructure isolation should be added.
+
+---
+
+# Observability and Operations
+
+The current assignment deployment intentionally keeps the operational stack small.
+
+Available operational checks include:
+
+```bash
+docker compose \
+  --env-file .env \
+  -f infra/docker-compose.prod.yml \
+  ps
+```
+
+Web logs:
+
+```bash
+docker compose \
+  --env-file .env \
+  -f infra/docker-compose.prod.yml \
+  logs --tail=100 web
+```
+
+Worker logs:
+
+```bash
+docker compose \
+  --env-file .env \
+  -f infra/docker-compose.prod.yml \
+  logs --tail=100 worker
+```
+
+Health check:
+
+```bash
+curl http://localhost/health
+```
+
+---
+
+# Design Decisions
+
+## Why Redis instead of an in-process queue?
+
+An in-memory queue works for a single-process development environment, but it cannot reliably coordinate independent API and worker containers.
+
+The production deployment therefore uses Redis as the cross-process queue.
+
+The queue interface remains abstract so the implementation can later be replaced by another queue backend.
+
+---
+
+## Why separate the worker from FastAPI?
+
+VLM inference is a long-running workload.
+
+Keeping inference inside the API process would couple HTTP availability to model execution.
+
+The current architecture isolates those concerns:
+
+```text
+API
+ │
+ └── enqueue
+       │
+       ▼
+     Redis
+       │
+       ▼
+    Worker
+       │
+       ▼
+   Qwen VLM
+```
+
+This also gives the system a straightforward path toward multiple workers.
+
+---
+
+## Why PostgreSQL?
+
+Job state and extraction results need to survive API and worker restarts.
+
+PostgreSQL provides durable relational storage and allows job/document relationships to be modeled explicitly.
+
+---
+
+## Why Docker Compose?
+
+The assignment requires a working application rather than a large platform.
+
+Docker Compose provides:
+
+* Reproducible deployment
+* Separate application services
+* Persistent database storage
+* Redis queueing
+* Simple operational workflows
+
+A larger orchestration platform would introduce additional operational complexity without being necessary to demonstrate the core system.
+
+---
+
+## Why use a remote Qwen-compatible endpoint?
+
+The application separates the inference interface from the rest of the system.
+
+This means the application can run against:
+
+```text
+Managed Qwen endpoint
+        OR
+Self-hosted Qwen/vLLM
+        OR
+Another OpenAI-compatible VLM endpoint
+```
+
+The current deployment uses a remote Qwen-compatible endpoint so that the AWS application infrastructure does not need to host GPU inference locally.
+
+---
+
+# Current Limitations
+
+The current assignment deployment deliberately has a few limitations.
+
+### Local object storage
+
+Images are stored on the EC2 host through a persistent Docker volume rather than Amazon S3.
+
+### HTTP only
+
+The demo is currently accessible through HTTP rather than HTTPS.
+
+### Remote inference
+
+Qwen inference is performed through the configured external inference endpoint.
+
+### Single EC2 deployment
+
+The current deployment is intentionally compact and does not provide multi-node orchestration.
+
+### No authentication
+
+The demo is intended for evaluation and does not currently include user authentication or authorization.
+
+These are deployment decisions rather than hidden assumptions and are documented here so the production evolution path is clear.
+
+---
+
+# Future Production Roadmap
+
+The current architecture is intentionally designed so that individual components can be replaced as traffic and operational requirements grow.
+
+## Object storage
+
+Replace local filesystem storage with:
+
+```text
+Amazon S3
+```
+
+and use presigned URLs for uploads/downloads.
+
+## Queue
+
+Replace or extend Redis with:
+
+```text
+Amazon SQS
+```
+
+for a fully managed durable queue.
+
+## Container orchestration
+
+Move the web and worker services to:
+
+```text
+Amazon ECS
+```
+
+or:
+
+```text
+Amazon EKS
+```
+
+when orchestration requirements justify it.
+
+## Worker autoscaling
+
+Scale workers based on queue depth using tools such as:
+
+```text
+KEDA
+```
+
+## Self-hosted inference
+
+Deploy:
+
+```text
+Qwen + vLLM
+```
+
+on dedicated GPU infrastructure where self-hosted inference is economically or operationally justified.
+
+## Infrastructure as Code
+
+Provision AWS infrastructure using:
+
+```text
+Terraform
+```
+
+## Observability
+
+Add:
+
+```text
+Prometheus
+Grafana
+OpenTelemetry
+```
+
+for metrics, traces, and operational dashboards.
+
+## CI/CD
+
+Introduce automated:
+
+```text
+GitHub Actions
+        ↓
+Build
+        ↓
+Test
+        ↓
+Container Image
+        ↓
+Deployment
+```
+
+---
+
+# Demo Workflow
+
+The deployed application can be demonstrated using the following flow:
+
+```text
+1. Open the application
+2. Create an extraction job
+3. Upload business-card images
+4. Observe job progress
+5. Wait for processing to complete
+6. Review extracted leads
+7. Download the XLSX export
+```
+
+Example:
+
+```text
+1 card
+   ↓
+Job completed
+   ↓
+1 successful
+   ↓
+0 failed
+   ↓
+100% processed
+   ↓
+Lead displayed
+   ↓
+Excel exported
+```
+
+---
+
+# Engineering Highlights
+
+This project demonstrates more than a direct VLM API call.
+
+The main engineering pieces are:
+
+```text
+Schema-constrained AI extraction
+            +
+Asynchronous job processing
+            +
+Redis queue
+            +
+Dedicated worker
+            +
+Persistent PostgreSQL state
+            +
+Document idempotency
+            +
+Partial failure isolation
+            +
+Typed validation
+            +
+Dockerized deployment
+            +
+AWS deployment
+```
+
+The result is a small but extensible architecture that can evolve from a take-home assignment into a larger production system without requiring the application layer to be rewritten.
+
+---
+
+# Repository
+
+GitHub:
+
+[https://github.com/AyaanShaheer/business-card-ai](https://github.com/AyaanShaheer/business-card-ai)
+
+---
+
+# License
+MIT License RESERVED 
