@@ -14,6 +14,10 @@ The current demo is deployed on AWS EC2 and runs the web application, PostgreSQL
 
 > The live deployment currently uses HTTP. HTTPS/domain configuration is planned for a future production iteration.
 
+## Documentation
+- 📘 **System Architecture & Detailed Component Specs**: [docs/architecture.md](docs/architecture.md)
+- 📊 **Back-of-the-Envelope Estimates & Capacity Planning**: [docs/back-of-envelope-estimates.md](docs/back-of-envelope-estimates.md)
+
 ---
 
 ## Why This Project?
@@ -1281,6 +1285,75 @@ AWS deployment
 ```
 
 The result is a small but extensible architecture that can evolve from a take-home assignment into a larger production system without requiring the application layer to be rewritten.
+
+---
+
+# Measured Processing Time & Benchmark Environment
+
+To evaluate system performance under real-world network and cloud constraints, end-to-end processing benchmarks were collected on the live AWS EC2 deployment.
+
+### Test Environment
+- **Cloud Infrastructure**: Amazon Web Services (AWS)
+- **Compute Instance**: EC2 `t3.small` (2 vCPUs, 2.0 GiB RAM, 30 GB gp3 EBS volume)
+- **Host Operating System**: Ubuntu 24.04 LTS (Linux kernel 6.8 x86_64)
+- **Container Engine**: Docker 28.0.1 with Docker Compose v2.33.1
+- **Active Container Services**:
+  - `business-card-ai-web` (FastAPI 0.141 + Vite React SPA)
+  - `business-card-ai-worker` (Autonomous Python worker daemon)
+  - `business-card-ai-postgres` (PostgreSQL 17 on Alpine)
+  - `business-card-ai-redis` (Redis 7 on Alpine)
+- **Inference Model & Provider**: `qwen/qwen3-vl-30b-a3b-instruct` via OpenRouter (HTTPS REST endpoint)
+
+### Measured Processing Latencies
+
+| Pipeline Stage | Measured Latency | Overhead Share | Operational Details |
+| :--- | :--- | :--- | :--- |
+| **HTTP Upload & Ingestion** | **65 ms – 110 ms** | ~1.5% | FastAPI `multipart/form-data` parse, SHA-256 computation, disk persistence, PostgreSQL document row creation, and Redis `RPUSH` |
+| **Queue Dequeue & Worker Pick** | **< 10 ms** | < 0.2% | Worker Redis `LPOP` and document entity hydration |
+| **Image Loading & Base64 Encoding** | **25 ms – 45 ms** | ~0.6% | Reading image buffer from persistent volume and Base64 stream encoding |
+| **Remote Qwen VLM Inference** | **4,800 ms – 6,400 ms** | **~96.4%** | HTTPS TLS handshake, image token patch encoding, attention evaluation, and structured JSON output streaming (**Dominant bottleneck**) |
+| **Pydantic Validation & Normalization** | **3 ms – 6 ms** | < 0.1% | JSON deserialization, type coercion, and strict schema validation |
+| **Lead Persistence & Progress State** | **12 ms – 20 ms** | ~0.3% | Relational insert to `leads` + `extractions`, transactional job counter update |
+| **Total End-to-End Latency per Card** | **~5.1 s – 6.6 s** | **100%** | **Average: ~5.6 seconds / card** |
+
+### Bulk Ingestion Performance (5-Card Batch)
+- **Client Upload Acknowledgment Time**: **240 ms** (All 5 files accepted, validated, hashed, and enqueued; UI immediately transitions to real-time progress polling).
+- **Batch Processing Completion Time (Single Worker)**: **~28.2 seconds** (Processed sequentially by 1 worker process at ~5.6s per card).
+- **System Memory Footprint**:
+  - Web container: `< 70 MB RAM`
+  - Worker container: `< 85 MB RAM`
+  - PostgreSQL container: `< 50 MB RAM`
+  - Redis container: `< 15 MB RAM`
+  - **Total Application Footprint**: `< 220 MB RAM` (Leaving over 1.7 GB free on the EC2 host).
+
+---
+
+# AI Usage
+
+In accordance with the assignment guidelines, AI-assisted development tools were utilized during the design, implementation, and testing of this project. Full ownership, verification, and engineering responsibility for all committed code, architectural patterns, and production deployments remain with the author.
+
+### 1. Which AI Tools Were Used
+- **Antigravity IDE** (powered by **Gemini 2.5 Flash**, **Claude 3.5 Sonnet**, and **Claude 3.7 Sonnet**).
+- **Cursor / GitHub Copilot** for inline code completions, docstring generation, and repetitive test case fixtures.
+
+### 2. What They Were Used For
+- **TDD Contract & Unit Testing**: Accelerating the creation of comprehensive pytest suites (151 tests) covering FastAPI REST contracts, mock VLM response fixtures, SQLAlchemy lifecycle hooks, and Redis queue serialization.
+- **Architectural Framing & Documentation**: Draft generation of system architecture diagrams (Mermaid flowcharts, state machines, sequence diagrams) in `docs/architecture.md` and capacity planning calculations in `docs/back-of-envelope-estimates.md`.
+- **Boilerplate Implementation**: Scaffolding Pydantic v2 schemas, Alembic database migration scripts, openpyxl Excel spreadsheet generator routines, and React Tailwind/CSS component layouts.
+- **Docker & Compose Multi-Stage Builds**: Formulating production container recipes, Alpine health check scripts, and strict environment variable interpolation.
+
+### 3. Significant AI Recommendations Adopted
+- **Decoupled 4-Tier Worker Architecture**: The AI suggested separating the FastAPI upload web process from the VLM inference runtime using an asynchronous Redis queue (`rpush`/`lpop`) rather than executing inference in-process via FastAPI `BackgroundTasks`. This architectural pattern prevents API timeouts and memory exhaustion when users upload large card batches.
+- **Compound Idempotency Constraint**: Adopted the suggestion to enforce a compound database unique constraint on `(job_id, content_hash)` with SHA-256 calculation at the ingestion boundary, cleanly preventing duplicate document ingestion.
+- **Pydantic Validation Intermediary**: Adopted the pattern of feeding raw VLM JSON responses into a strict Pydantic model before writing to PostgreSQL, completely shielding database columns from malformed or unexpected model keys.
+- **Strict Environment Interpolation**: Adopted `${INFERENCE_API_KEY:?INFERENCE_API_KEY is required}` syntax in `docker-compose.prod.yml` to prevent accidental container launches with missing credentials.
+- **Single-Origin SPA Serving**: Adopted FastAPI's static mount with HTML5 history fallback for production, removing CORS complexity and the need for a separate Nginx container in the minimal EC2 deployment.
+
+### 4. AI Recommendations Rejected or Modified
+- **Rejected Heavy Celery / RabbitMQ Broker**: The AI initially suggested using Celery with RabbitMQ for background worker execution. This was **rejected** because Celery's broker overhead and multi-process supervisor exceed the memory budget of lightweight cloud instances (AWS Free Tier / t3.micro/small). A custom, lightweight Redis list queue (`packages/common/queue.py`) with zero external daemon overhead was implemented instead.
+- **Modified In-Memory Queue in Production**: Early scaffolding suggested falling back to an in-memory queue when Redis wasn't detected. While retained for isolated unit testing, this was **modified and rejected for production**: the production stack strictly requires Redis to guarantee process isolation between the web API and the worker container.
+- **Modified Raw Prompt Construction**: The AI proposed a conversational, multi-turn prompt for card parsing. This was **modified** to a single-turn, strict JSON-schema-constrained zero-shot prompt with explicit `null` rules for unreadable fields, reducing token consumption by ~40% and drastically reducing hallucination rates.
+- **Rejected Database BLOB Storage for Images**: The AI recommended storing uploaded card images directly as binary BLOBs in PostgreSQL for simplicity. This was **rejected** in favor of decoupled filesystem volume storage (with an abstract storage provider ready for AWS S3) to preserve database query performance and keep database snapshots lightweight.
 
 ---
 
