@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     )
 
     database_url: PostgresDsn
+    redis_url: str | None = Field(
+        default=None,
+    )
 
     max_file_size_mb: int = Field(
         default=10,

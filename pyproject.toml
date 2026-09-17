@@ -16,6 +16,7 @@ dependencies = [
     "httpx>=0.28.0",
     "openpyxl>=3.1.5",
     "python-multipart>=0.0.20",
+    "redis>=5.0.0",
 ]
 
 [project.optional-dependencies]

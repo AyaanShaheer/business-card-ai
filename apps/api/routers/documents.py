@@ -17,7 +17,7 @@ from apps.api.schemas import (
     BulkUploadResponse,
     DocumentResponse,
 )
-from packages.common.queue import DocumentMessage, InMemoryQueue
+from packages.common.queue import DocumentMessage, InMemoryQueue, create_queue
 from packages.common.repositories import DocumentRepository, JobRepository
 from packages.common.services import DocumentService
 from packages.common.storage import ObjectStorage
@@ -29,7 +29,7 @@ router = APIRouter(
 )
 
 storage = ObjectStorage()
-queue = InMemoryQueue()
+queue = create_queue()
 
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024
 

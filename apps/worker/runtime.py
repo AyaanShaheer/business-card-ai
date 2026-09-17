@@ -1,6 +1,9 @@
+import logging
 import time
 
 from apps.worker.worker import Worker
+
+logger = logging.getLogger("business_card_ai.worker")
 
 
 class WorkerRuntime:
@@ -40,7 +43,11 @@ class WorkerRuntime:
     def run_forever(self) -> None:
         """Continuously consume messages until shutdown is requested."""
         while not self._stop_requested:
-            processed = self.run_once()
+            try:
+                processed = self.run_once()
+            except Exception as exc:
+                logger.error("Error encountered in worker loop: %s", exc)
+                processed = 0
 
             if processed == 0 and not self._stop_requested:
                 time.sleep(self._idle_sleep_seconds)

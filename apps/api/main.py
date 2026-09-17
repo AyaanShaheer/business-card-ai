@@ -66,24 +66,27 @@ async def lifespan(app: FastAPI):
 
     if not is_testing:
         settings = Settings()
-        worker_app = create_worker_application(
-            settings=settings,
-            queue=documents_queue,
-        )
-        runtime = WorkerRuntime(
-            worker=worker_app.worker,
-            idle_sleep_seconds=0.5,
-        )
+        if not settings.redis_url:
+            worker_app = create_worker_application(
+                settings=settings,
+                queue=documents_queue,
+            )
+            runtime = WorkerRuntime(
+                worker=worker_app.worker,
+                idle_sleep_seconds=0.5,
+            )
 
-        _recover_unprocessed_documents(worker_app._engine, documents_queue)
+            _recover_unprocessed_documents(worker_app._engine, documents_queue)
 
-        worker_thread = threading.Thread(
-            target=runtime.run_forever,
-            daemon=True,
-            name="BusinessCardWorkerThread",
-        )
-        worker_thread.start()
-        logger.info("Background document processing worker started successfully")
+            worker_thread = threading.Thread(
+                target=runtime.run_forever,
+                daemon=True,
+                name="BusinessCardWorkerThread",
+            )
+            worker_thread.start()
+            logger.info("Background document processing worker started successfully")
+        else:
+            logger.info("Using external worker via Redis queue: %s", settings.redis_url)
 
     yield
 

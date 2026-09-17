@@ -1,20 +1,26 @@
+x-common-env: &common-env
+  DATABASE_URL: postgresql+psycopg://business_card_ai:${POSTGRES_PASSWORD:-business_card_ai_dev}@postgres:5432/business_card_ai
+  REDIS_URL: redis://redis:6379/0
+  INFERENCE_API_KEY: ${INFERENCE_API_KEY:?INFERENCE_API_KEY is required}
+  INFERENCE_BASE_URL: ${INFERENCE_BASE_URL:-https://openrouter.ai/api/v1}
+  INFERENCE_MODEL: ${INFERENCE_MODEL:-qwen/qwen3-vl-30b-a3b-instruct}
+  INFERENCE_TIMEOUT_SECONDS: ${INFERENCE_TIMEOUT_SECONDS:-120}
+  MAX_FILE_SIZE_MB: ${MAX_FILE_SIZE_MB:-10}
+  MAX_FILES_PER_JOB: ${MAX_FILES_PER_JOB:-50}
+
 services:
   postgres:
     image: postgres:17
     container_name: business-card-ai-postgres
     restart: unless-stopped
-
     environment:
       POSTGRES_DB: business_card_ai
       POSTGRES_USER: business_card_ai
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-business_card_ai_dev}
-
     ports:
       - "5432:5432"
-
     volumes:
       - postgres_data:/var/lib/postgresql/data
-
     healthcheck:
       test:
         [
@@ -25,26 +31,57 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    container_name: business-card-ai-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   web:
     build:
       context: ..
       dockerfile: Dockerfile
+    image: business-card-ai:prod
     container_name: business-card-ai-web
     restart: unless-stopped
     ports:
       - "80:80"
-
     env_file:
       - ../.env
-
     environment:
-      DATABASE_URL: postgresql+psycopg://business_card_ai:${POSTGRES_PASSWORD:-business_card_ai_dev}@postgres:5432/business_card_ai
-
+      <<: *common-env
     volumes:
       - upload_storage:/app/local_storage
-
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: business-card-ai:prod
+    container_name: business-card-ai-worker
+    restart: unless-stopped
+    command: ["python", "-m", "apps.worker"]
+    env_file:
+      - ../.env
+    environment:
+      <<: *common-env
+    volumes:
+      - upload_storage:/app/local_storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
 volumes:
